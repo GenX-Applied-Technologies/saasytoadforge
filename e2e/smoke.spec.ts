@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test'
 test('smoke: pricing loads, sign up, create workspace, run a task to green', async ({ page }) => {
   await page.goto('/pricing')
   await expect(page.getByText('Simple, flat pricing')).toBeVisible({ timeout: 15000 })
-  await expect(page.getByText('Agency')).toBeVisible()
+  await expect(page.getByText('Pro Builder')).toBeVisible()
   await page.screenshot({ path: 'test-results/pricing.png' })
 
   await page.goto('/workspaces')
