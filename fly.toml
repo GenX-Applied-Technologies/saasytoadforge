@@ -1,11 +1,11 @@
 # Fly.io config for the agent service. Set secrets with:
 #   fly secrets set OPENROUTER_API_KEY=... E2B_API_KEY=... SUPABASE_URL=... \
-#     SUPABASE_SERVICE_ROLE_KEY=... EGRESS_ALLOWLIST=registry.npmjs.org,pypi.org
+#     SUPABASE_SERVICE_ROLE_KEY=... AGENT_SERVICE_SECRET=... ALLOWED_ORIGINS=https://your-web-origin
 app = "saasytoad-forge-agent"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = "apps/agent-service/Dockerfile"
 
 [env]
   PORT = "8787"
