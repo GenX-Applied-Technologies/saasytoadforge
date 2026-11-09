@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "build": "pnpm -r --if-present build",
-    "dev": "pnpm -r --parallel --if-present dev"
+    "dev": "pnpm -r --parallel --if-present dev",
+    "test:game": "pnpm --filter @forge/game-template build && playwright test --config playwright.game.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

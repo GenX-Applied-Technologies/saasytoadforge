@@ -1,0 +1,12 @@
+{
+  "name": "@forge/game-template",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs"
+  },
+  "dependencies": { "phaser": "3.90.0" },
+  "devDependencies": { "esbuild": "0.25.12" }
+}

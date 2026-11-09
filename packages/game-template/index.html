@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Forge Garden — playable Phaser proof</title>
+  <style>
+    body { margin: 0; background: #101d29; color: #f0f7ee; font: 18px system-ui; text-align: center; }
+    h1 { margin-bottom: 6px; } p { margin: 8px; } #game { margin: 20px auto; max-width: 640px; }
+    canvas { display: block; max-width: 100%; } #status { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <h1>Forge Garden</h1>
+  <p>Arrow keys or WASD to move. Collect 3 gold seeds. Walls stop you. R restarts.</p>
+  <p>Local prototype · generated geometric art · no AI calls</p>
+  <p id="status" role="status" aria-live="polite">Score: 0 / 3</p>
+  <div id="game" aria-label="Garden game"></div>
+  <script src="./game.js"></script>
+</body>
+</html>
