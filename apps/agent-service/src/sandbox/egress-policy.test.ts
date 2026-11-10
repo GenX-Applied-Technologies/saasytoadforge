@@ -76,5 +76,7 @@ describe('Forge E2B template', () => {
     expect(df).toContain('playwright install --with-deps chromium')
     expect(df).toContain('PLAYWRIGHT_BROWSERS_PATH=/ms-playwright')
     expect(df).toContain(`phaser@${FORGE_TEMPLATE_VERSIONS.phaser}`)
+    expect(df).toContain(`esbuild@${FORGE_TEMPLATE_VERSIONS.esbuild}`)
+    expect(df).toContain('onlyBuiltDependencies')
   })
 })

@@ -16,6 +16,7 @@ export const FORGE_TEMPLATE_VERSIONS = {
   phaser: '3.90.0',
   vite: '7.1.12',
   typescript: '5.9.3',
+  esbuild: '0.25.12',
 } as const
 
 /** Packages fetched once at build time into the pnpm store so installs work offline. */
@@ -23,6 +24,7 @@ export const PREFETCH_PACKAGES = [
   `phaser@${FORGE_TEMPLATE_VERSIONS.phaser}`,
   `vite@${FORGE_TEMPLATE_VERSIONS.vite}`,
   `typescript@${FORGE_TEMPLATE_VERSIONS.typescript}`,
+  `esbuild@${FORGE_TEMPLATE_VERSIONS.esbuild}`,
   `@playwright/test@${FORGE_TEMPLATE_VERSIONS.playwright}`,
 ] as const
 
@@ -45,7 +47,7 @@ export function forgeTemplate(): TemplateClass {
     .setWorkdir('/home/user')
     .runCmd([
       'pnpm config set store-dir /opt/forge-store',
-      `mkdir -p /tmp/forge-prefetch && cd /tmp/forge-prefetch && printf '{"name":"prefetch","private":true}' > package.json && pnpm add ${PREFETCH_PACKAGES.join(' ')} && cd / && rm -rf /tmp/forge-prefetch`,
+      `mkdir -p /tmp/forge-prefetch && cd /tmp/forge-prefetch && printf '%s' '{"name":"prefetch","private":true,"pnpm":{"onlyBuiltDependencies":["esbuild"]}}' > package.json && pnpm add ${PREFETCH_PACKAGES.join(' ')} && cd / && rm -rf /tmp/forge-prefetch`,
       'pnpm config set prefer-offline true',
     ])
 }

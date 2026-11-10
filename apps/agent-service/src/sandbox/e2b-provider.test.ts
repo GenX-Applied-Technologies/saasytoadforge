@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CommandExitError, SandboxNotFoundError, TimeoutError, type SandboxOpts } from 'e2b'
+import { CommandExitError, FileNotFoundError, SandboxNotFoundError, TimeoutError, type SandboxOpts } from 'e2b'
 import { E2BSandboxProvider, type E2BApi, type E2BSandboxHandle } from './e2b-provider'
 import { SandboxSpendGuard } from './spend-guard'
 import { FileSpendLedger } from '../lib/file-spend-ledger'
@@ -208,6 +208,12 @@ describe('E2BSandboxProvider: create', () => {
     expect(ledger.read().entries[0]).toMatchObject({ status: 'settled', outcome: 'create_orphan_killed' })
   })
 
+  it('create timeout: maps AbortSignal.timeout DOMException to sandbox_create_timeout', async () => {
+    const { api, provider } = setup()
+    api.createImpl = async () => { throw new DOMException('Request handshake timed out after 1ms', 'TimeoutError') }
+    await expect(provider.create({ template: 'n', envAllowlist: [] })).rejects.toMatchObject({ code: 'sandbox_create_timeout' })
+  })
+
   it('create failure with E2B unreachable: keeps the full worst case reserved', async () => {
     const { api, provider, ledger } = setup()
     api.createImpl = async () => { throw new TimeoutError('t') }
@@ -336,6 +342,17 @@ describe('E2BSandboxProvider: running, timeout and teardown', () => {
     expect(api.sandboxes.find((s) => s.id === leftover.sandboxId)!.killed).toBe(true)
     expect(api.sandboxes.find((s) => s.id === other.sandboxId)!.killed).toBe(false)
     expect(api.sandboxes.find((s) => s.id === mine.id)!.killed).toBe(false)
+  })
+
+  it('a missing file (FileNotFoundError) does not mark the sandbox gone', async () => {
+    const { api, provider, ledger } = setup()
+    const sbx = await provider.create({ template: 'n', envAllowlist: [] })
+    const live = (provider as unknown as { live: Map<string, { sbx: E2BSandboxHandle }> }).live.get(sbx.id)!
+    live.sbx.files.read = async () => { throw new FileNotFoundError('src/config.js') }
+    await expect(provider.readFile(sbx.id, 'src/config.js')).rejects.toBeInstanceOf(FileNotFoundError)
+    expect(provider.size).toBe(1)
+    expect(open(ledger)).toHaveLength(1)
+    await provider.destroy(sbx.id)
   })
 
   it('rejects path traversal before reaching E2B', async () => {

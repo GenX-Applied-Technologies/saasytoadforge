@@ -4,7 +4,6 @@ import {
   CommandExitError,
   FileType,
   TimeoutError,
-  NotFoundError,
   SandboxNotFoundError,
   SandboxNotRunningError,
   type SandboxInfo,
@@ -87,7 +86,12 @@ const DEFAULT_CREATE_TIMEOUT_MS = 60_000
 const EXPIRY_GRACE_MS = 5_000
 
 const isGone = (err: unknown) =>
-  err instanceof SandboxNotFoundError || err instanceof SandboxNotRunningError || err instanceof NotFoundError
+  err instanceof SandboxNotFoundError || err instanceof SandboxNotRunningError
+
+/** E2B's TimeoutError, plus the DOMException/AbortError that AbortSignal.timeout throws on requestTimeoutMs. */
+const isTimeout = (err: unknown) =>
+  err instanceof TimeoutError
+  || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError'))
 
 /**
  * Real microVM sandbox via E2B (Firecracker), SDK 2.x. Untrusted/agent code runs here, never
@@ -143,7 +147,7 @@ export class E2BSandboxProvider implements SandboxProvider {
         })
       } catch (err) {
         await this.recoverFailedCreate(reservation, nonce, err)
-        throw new SandboxError(err instanceof TimeoutError ? 'sandbox_create_timeout' : 'sandbox_create_failed')
+        throw new SandboxError(isTimeout(err) ? 'sandbox_create_timeout' : 'sandbox_create_failed')
       }
 
       // From here the microVM is live and billing. Any failure below kills it before surfacing.

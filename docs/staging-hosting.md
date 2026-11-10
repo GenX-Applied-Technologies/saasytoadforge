@@ -68,4 +68,10 @@ fly auth login                                   # Ron, once, in a browser
 FORGE_STAGING_APPROVED=yes apps/agent-service/scripts/staging/deploy.sh
 apps/agent-service/scripts/staging/teardown.sh stop      # stop compute billing
 apps/agent-service/scripts/staging/teardown.sh destroy   # delete app + volume (all billing ends)
+# After a deploy, destroy any leftover remote builder (shared-cpu-8x / 8 GB):
+#   fly apps destroy fly-builder-<name> --yes
+# deploy.sh now does this automatically.
 ```
+
+Staging URL after the 2026-11-10 paid deploy: https://saasytoad-forge-agent-staging.fly.dev
+(`GET /health` and `GET /ready` returned 200). See `docs/verification/step0.md`.

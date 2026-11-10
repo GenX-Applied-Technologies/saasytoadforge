@@ -10,7 +10,8 @@ app = "saasytoad-forge-agent-staging"
 primary_region = "iad"
 
 [build]
-  dockerfile = "apps/agent-service/Dockerfile"
+  # Path is relative to this config file. deploy.sh runs from the repo root so the build context is the monorepo.
+  dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = "production"
