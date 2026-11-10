@@ -78,3 +78,30 @@ priced here as sandbox time (worst case).
 
 Expected total ≈ **$1**, hard cap **$3.56** in code-enforced sandbox time (+ $5 console
 backstop). Likely **$0 cash** while the Hobby $100 credit lasts.
+
+## Run log 2026-11-10, ~2:05 PM ET (America/Detroit)
+All runs used a process env with every model/provider/payment key removed (Gemini, Anthropic,
+OpenAI, xAI, Together, MiniMax, fal, Resend, Twilio, Square, Supabase, Router token); only
+`E2B_API_KEY` was inherited (never printed or put on a command line). The smoke script also
+refuses to start if any model key is present.
+
+New: `apps/agent-service/scripts/step2-smoke.ts` — real E2B, same provider/guard/ledger as the
+server, no mocks. Free phase always runs; the paid phase (ONE sandbox, 10-minute timeout,
+ledger cap ≤ $0.50) runs only with `FORGE_E2B_PAID_APPROVED=step2-smoke`.
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| E2B key authenticates (list call only, no sandbox) | **proven live, $0** | 0 running/paused sandboxes |
+| 402: cap $0.001 < worst case → refused, E2B create never called, ledger untouched | **proven live, $0** | step2-smoke free phase |
+| 503: unknown template → E2B refuses; reservation of $0.0276 was held when create was called, then released to $0; nothing left on E2B | **proven live, $0** | step2-smoke free phase |
+| Reserve-before-create with a booted sandbox; deny-all; allow rule; tighten; 429; 410; 504; kill | **not run** | paid phase held (see below) |
+| Template build, `step2-live.ts`, end-to-end | **not run** | paid |
+| Free suites | pass | Forge vitest 39 files / 321 tests; Router 3463/3463 |
+
+Actual E2B spend so far: **$0.00** (ledger committed $0; no sandbox has booted).
+Paid phase held pending Ron's own confirmation of the 1:45 PM "go ahead with forge test"
+message, which came from the shared account two minutes after Joe wrote from it.
+
+To run the paid smoke (≤ $0.0276 reserved, ledger cap $0.50):
+`FORGE_DATA_DIR=<dir> FORGE_E2B_PAID_APPROVED=step2-smoke npx tsx scripts/step2-smoke.ts`
+(from `apps/agent-service`, under a key-scrubbed env).
