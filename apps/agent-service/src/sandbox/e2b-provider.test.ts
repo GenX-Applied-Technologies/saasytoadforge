@@ -345,7 +345,7 @@ describe('E2BSandboxProvider: running, timeout and teardown', () => {
   })
 
   it('a missing file (FileNotFoundError) does not mark the sandbox gone', async () => {
-    const { api, provider, ledger } = setup()
+    const { provider, ledger } = setup()
     const sbx = await provider.create({ template: 'n', envAllowlist: [] })
     const live = (provider as unknown as { live: Map<string, { sbx: E2BSandboxHandle }> }).live.get(sbx.id)!
     live.sbx.files.read = async () => { throw new FileNotFoundError('src/config.js') }

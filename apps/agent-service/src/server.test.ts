@@ -64,9 +64,23 @@ describe('protected routes', () => {
 })
 
 describe('stripe webhook', () => {
-  // The webhook is public to the auth hook (Stripe sends no Bearer token) but must
-  // reject anything without a valid signature, so it never grants credit on a forged event.
-  it('reaches the handler and rejects a missing signature with 400, not 401', async () => {
+  // The webhook is public to the auth hook (a billing provider sends no Bearer token)
+  // but must never accept an unverified event. Mock/unconfigured answers 501.
+  it('rejects an unconfigured billing webhook with 501, not 200 or 401', async () => {
+    const app = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 't=1,v1=deadbeef' },
+      payload: { type: 'checkout.session.completed' },
+    })
+    expect(res.statusCode).toBe(501)
+    expect(res.json()).toEqual({ error: 'billing not configured' })
+    expect(res.body).not.toContain('received')
+    await app.close()
+  })
+
+  it('still answers 501 when the signature header is missing on the mock provider', async () => {
     const app = buildServer()
     const res = await app.inject({
       method: 'POST',
@@ -74,8 +88,137 @@ describe('stripe webhook', () => {
       headers: { 'content-type': 'application/json' },
       payload: { type: 'checkout.session.completed' },
     })
+    expect(res.statusCode).toBe(501)
+    expect(res.json()).toEqual({ error: 'billing not configured' })
+    await app.close()
+  })
+
+  it('rejects a forged signature with 400 when a live Stripe provider is configured', async () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_not_a_real_key')
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'whsec_test_not_a_real_secret')
+    const app = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 't=1,v1=deadbeef' },
+      payload: { type: 'checkout.session.completed' },
+    })
     expect(res.statusCode).toBe(400)
-    expect(res.json()).toEqual({ error: 'missing signature or body' })
+    expect(res.json()).toEqual({ error: 'invalid signature' })
+    expect(res.body).not.toContain('received')
+    await app.close()
+    vi.unstubAllEnvs()
+  })
+})
+
+describe('invalid JSON bodies', () => {
+  it('maps malformed JSON on the webhook to 400 {error:invalid json}, not a raw parser message', async () => {
+    const app = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/webhooks/stripe',
+      headers: { 'content-type': 'application/json', 'stripe-signature': 't=1,v1=deadbeef' },
+      payload: '{not-json',
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toEqual({ error: 'invalid json' })
+    expect(res.body.toLowerCase()).not.toContain('unexpected')
+    expect(res.body.toLowerCase()).not.toContain('syntaxerror')
+    await app.close()
+  })
+
+  it('maps malformed JSON on POST /health to 400 {error:invalid json}', async () => {
+    const app = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/health',
+      headers: { 'content-type': 'application/json' },
+      payload: '{not-json',
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toEqual({ error: 'invalid json' })
+    expect(res.body.toLowerCase()).not.toContain('unexpected')
+    await app.close()
+  })
+})
+
+describe('wrong methods', () => {
+  it('returns 405 and an Allow header for POST /health', async () => {
+    const app = buildServer()
+    const res = await app.inject({ method: 'POST', url: '/health' })
+    expect(res.statusCode).toBe(405)
+    expect(res.headers.allow).toMatch(/GET/)
+    expect(res.json()).toEqual({ error: 'method not allowed' })
+    await app.close()
+  })
+
+  it('returns 405 and an Allow header for GET /webhooks/stripe', async () => {
+    const app = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/webhooks/stripe' })
+    expect(res.statusCode).toBe(405)
+    expect(res.headers.allow).toMatch(/POST/)
+    expect(res.json()).toEqual({ error: 'method not allowed' })
+    await app.close()
+  })
+
+  it('still returns 404 for a path that does not exist', async () => {
+    const app = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/no-such-route' })
+    expect(res.statusCode).toBe(404)
+    expect(res.headers.allow).toBeUndefined()
+    await app.close()
+  })
+})
+
+describe('config exposure', () => {
+  it('keeps the full /config payload behind auth', async () => {
+    const app = buildServer()
+    const anon = await app.inject({ method: 'GET', url: '/config' })
+    expect(anon.statusCode).toBe(401)
+    expect(anon.body).not.toContain('perUserUsd')
+    expect(anon.body).not.toContain('openrouter')
+    const { mintAgentToken, DEFAULT_AGENT_SERVICE_SECRET } = await import('@forge/shared')
+    const auth = { authorization: `Bearer ${mintAgentToken('alice', DEFAULT_AGENT_SERVICE_SECRET)}` }
+    const ok = await app.inject({ method: 'GET', url: '/config', headers: auth })
+    expect(ok.statusCode).toBe(200)
+    const body = ok.json()
+    expect(body).toHaveProperty('models')
+    expect(body).toHaveProperty('caps')
+    expect(body).toHaveProperty('secrets')
+    await app.close()
+  })
+
+  it('serves only a harmless public subset at /config/public', async () => {
+    const app = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/config/public' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as Record<string, unknown>
+    expect(body).toEqual({ service: 'agent-service', billingConfigured: false })
+    expect(JSON.stringify(body)).not.toMatch(/model|cap|secret|openrouter|e2b|perUser/i)
+    await app.close()
+  })
+})
+
+describe('security headers and trailing slash', () => {
+  it('sends HSTS, nosniff, CSP, Referrer-Policy, and frame-ancestors on /health', async () => {
+    const app = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/health' })
+    expect(res.statusCode).toBe(200)
+    const h = res.headers
+    expect(String(h['strict-transport-security'] ?? '')).toMatch(/max-age=\d+/)
+    expect(h['x-content-type-options']).toBe('nosniff')
+    expect(String(h['content-security-policy'] ?? '')).toMatch(/frame-ancestors\s+'none'/)
+    expect(h['referrer-policy']).toBe('no-referrer')
+    const frame = String(h['x-frame-options'] ?? '').toLowerCase()
+    expect(frame === 'deny' || String(h['content-security-policy']).includes("frame-ancestors 'none'")).toBe(true)
+    await app.close()
+  })
+
+  it('answers GET /health/ the same as /health', async () => {
+    const app = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/health/' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ status: 'ok', service: 'agent-service' })
     await app.close()
   })
 })

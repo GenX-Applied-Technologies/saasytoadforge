@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { parseServerEnv } from '@forge/shared'
 import { SpendLedger } from '../lib/spend'
-import { PLANS, MockBillingProvider, createBillingProvider } from './billing'
+import { PLANS, MockBillingProvider, BillingNotConfiguredError, createBillingProvider } from './billing'
 
 describe('billing plans', () => {
   it('offers flat plans with AI included and no metering', () => {
@@ -24,6 +24,12 @@ describe('MockBillingProvider', () => {
     })
     expect(result.mode).toBe('mock')
     expect(result.url).toContain('pro')
+  })
+
+  it('rejects every webhook so an unverified event is never accepted', async () => {
+    await expect(new MockBillingProvider().handleWebhook('{"type":"ping"}', 't=1,v1=deadbeef')).rejects.toBeInstanceOf(
+      BillingNotConfiguredError,
+    )
   })
 })
 

@@ -56,7 +56,23 @@ export interface BillingProvider {
   readonly kind: 'mock' | 'stripe'
 }
 
-/** No live charge: returns a local URL. Used until STRIPE_SECRET_KEY is supplied. */
+/**
+ * Thrown when a webhook arrives but no live billing provider is configured.
+ * The HTTP route maps this to 501 so an unverified event is never accepted.
+ *
+ * Naming note: the live provider today is Stripe-shaped, but Ron bills with
+ * Square. Do not treat a mock or unconfigured webhook as paid. A Square
+ * provider is not built here.
+ */
+export class BillingNotConfiguredError extends Error {
+  readonly code = 'billing_not_configured'
+  constructor() {
+    super('billing not configured')
+    this.name = 'BillingNotConfiguredError'
+  }
+}
+
+/** No live charge: returns a local URL. Used until a live billing provider is supplied. */
 export class MockBillingProvider implements BillingProvider {
   readonly kind = 'mock' as const
 
@@ -68,9 +84,13 @@ export class MockBillingProvider implements BillingProvider {
     return { url: `/pricing?selected=${encodeURIComponent(planId)}`, mode: 'mock' }
   }
 
-  /** Mock has no live webhooks, and never grants credit without a verified payment. */
-  async handleWebhook(): Promise<WebhookFulfillment | null> {
-    return null
+  /**
+   * Always throws. The mock must never return null (the route would answer 200
+   * {received:true}) and must never grant credit. A forged signature is still
+   * rejected because this path never verifies or fulfils.
+   */
+  async handleWebhook(_rawBody: string, _signature: string): Promise<WebhookFulfillment | null> {
+    throw new BillingNotConfiguredError()
   }
 }
 
