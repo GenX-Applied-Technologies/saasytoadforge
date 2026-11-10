@@ -73,3 +73,42 @@ describe('serverEnv', () => {
     expect(env.AGENT_SERVICE_SECRET).toBe('a-strong-unique-secret')
   })
 })
+
+describe('hosted staging fails closed', () => {
+  const staging = {
+    NODE_ENV: 'production', FORGE_DEPLOY_ENV: 'staging', AGENT_SERVICE_SECRET: 's'.repeat(48),
+    ALLOWED_ORIGINS: 'https://forge-web-git-staging.vercel.app', GENX_ROUTER_URL: 'https://router-git-forge.vercel.app',
+    GENX_ROUTER_FORGE_TOKEN: 't'.repeat(64), SANDBOX_PROVIDER: 'e2b', E2B_API_KEY: 'e2b_placeholder',
+  }
+  it('accepts a complete staging configuration', () => {
+    expect(parseServerEnv(staging as NodeJS.ProcessEnv).FORGE_DEPLOY_ENV).toBe('staging')
+  })
+  it('refuses production outright', () => {
+    expect(() => parseServerEnv({ ...staging, FORGE_DEPLOY_ENV: 'production' } as NodeJS.ProcessEnv)).toThrow('not approved')
+  })
+  it.each([
+    [{ NODE_ENV: 'development' }, 'NODE_ENV'],
+    [{ AGENT_SERVICE_SECRET: DEFAULT_AGENT_SERVICE_SECRET }, 'AGENT_SERVICE_SECRET'],
+    [{ AGENT_SERVICE_SECRET: 'short-but-not-default' }, 'AGENT_SERVICE_SECRET'],
+    [{ ALLOWED_ORIGINS: '' }, 'ALLOWED_ORIGINS'],
+    [{ ALLOWED_ORIGINS: 'http://forge.example' }, 'ALLOWED_ORIGINS'],
+    [{ ALLOWED_ORIGINS: 'https://*.vercel.app' }, 'ALLOWED_ORIGINS'],
+    [{ GENX_ROUTER_URL: undefined }, 'GENX_ROUTER_URL'],
+    [{ GENX_ROUTER_URL: 'http://router.example' }, 'https'],
+    [{ ANTHROPIC_API_KEY: 'sk-x' }, 'ANTHROPIC_API_KEY'],
+    [{ OPENROUTER_API_KEY: 'sk-x' }, 'OPENROUTER_API_KEY'],
+    [{ STRIPE_SECRET_KEY: 'sk_test_x' }, 'Stripe'],
+    [{ SANDBOX_PROVIDER: 'mock' }, 'E2B_API_KEY'],
+    [{ E2B_API_KEY: undefined }, 'E2B_API_KEY'],
+  ])('refuses %j', (patch, name) => {
+    let message = ''
+    try { parseServerEnv({ ...staging, ...patch } as NodeJS.ProcessEnv) } catch (e) { message = (e as Error).message }
+    expect(message).toContain('Staging configuration refused')
+    expect(message).toContain(name)
+    // Names only: no secret value ever appears in the error.
+    expect(message).not.toContain('t'.repeat(64)); expect(message).not.toContain('s'.repeat(48))
+  })
+  it('leaves local development untouched', () => {
+    expect(() => parseServerEnv({})).not.toThrow()
+  })
+})

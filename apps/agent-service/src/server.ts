@@ -20,7 +20,7 @@ import {
   type ConfigSummary,
   type DeployResult,
 } from '@forge/shared'
-import { createSandboxProvider } from './sandbox'
+import { createSandboxProvider, MockSandboxProvider } from './sandbox'
 import { WorkspaceManager, type Workspace } from './workspace/manager'
 import { assertSafePath, PathError } from './lib/paths'
 import { Agent, ApprovalGate, QuestionGate } from './agent/agent'
@@ -53,7 +53,7 @@ export interface ServerDeps {
 
 // /webhooks/stripe is public to the auth hook because Stripe sends no Bearer token;
 // it authenticates instead by verifying the Stripe signature against the raw body.
-const PUBLIC_PATHS = new Set(['/health', '/config', '/billing/plans', '/webhooks/stripe'])
+const PUBLIC_PATHS = new Set(['/health', '/ready', '/config', '/billing/plans', '/webhooks/stripe'])
 const WS_ROUTE = /\/workspaces\/[^/]+\/(shell|agent)$/
 
 /** Estimated tokens per agent run, feeding the spend-cap pre-charge. */
@@ -104,7 +104,7 @@ export function buildServer(deps?: Partial<ServerDeps>): FastifyInstance {
   const env = parseServerEnv()
   // Fail at boot, not mid-request: a partial Router config, or no model provider in
   // production, refuses to start rather than silently running on the offline mock.
-  createLlmClient(env)
+  const bootLlm = createLlmClient(env)
   const provider = deps?.provider ?? createSandboxProvider(env)
   const browser = deps?.browser ?? new MockBrowserTool()
   const ledger = deps?.ledger ?? new SpendLedger()
@@ -141,7 +141,7 @@ export function buildServer(deps?: Partial<ServerDeps>): FastifyInstance {
     timeWindow: '1 minute',
   })
   void app.register(websocket)
-  void app.register(routes(provider, workspaces, env, browser, ledger))
+  void app.register(routes(provider, workspaces, env, browser, ledger, bootLlm.kind))
 
   return app
 }
@@ -168,6 +168,7 @@ function routes(
   env: ServerEnv,
   browser: BrowserTool,
   ledger: SpendLedger,
+  modelClientKind: string,
 ): FastifyPluginAsync {
   const caps: SpendCaps = {
     perUserUsd: env.SPEND_CAP_USER_USD,
@@ -211,7 +212,27 @@ function routes(
       req.userEmail = claims.email
     })
 
-    app.get('/health', async () => ({ status: 'ok', service: 'agent-service' }))
+    // Liveness: no dependencies, no secrets. Version/env/region let a walkthrough confirm
+    // which build and host answered (Fly sets FLY_REGION; FORGE_BUILD_SHA is a build arg).
+    app.get('/health', async () => ({
+      status: 'ok',
+      service: 'agent-service',
+      version: env.FORGE_BUILD_SHA ?? 'dev',
+      deployEnv: env.FORGE_DEPLOY_ENV,
+      region: process.env.FLY_REGION ?? null,
+    }))
+
+    // Readiness: what this instance would actually use, checked without calling any paid API.
+    // Hosted staging is ready only on the Router model client and a real (non-mock) sandbox.
+    app.get('/ready', async (_req, reply) => {
+      const checks = {
+        modelClient: modelClientKind,
+        sandbox: provider instanceof MockSandboxProvider ? 'mock' : 'real',
+      }
+      const hosted = env.FORGE_DEPLOY_ENV !== 'local'
+      const ready = !hosted || (checks.modelClient === 'genx-router' && checks.sandbox === 'real')
+      return reply.code(ready ? 200 : 503).send({ ready, deployEnv: env.FORGE_DEPLOY_ENV, checks })
+    })
 
     app.get('/admin/stats', async (req, reply) => {
       const email = req.userEmail

@@ -61,6 +61,23 @@ describe('server-only GenX Router LLM client', () => {
   it.each(['http://public.example', 'https://router.example/api', 'https://u:p@router.example', 'https://router.example?key=x'])('rejects unsafe origins %s', origin => {
     expect(() => new RouterLlmClient(origin, token)).toThrow('HTTPS origin')
   })
+  it('sends the Vercel protection bypass only when configured, and rejects a bad one', async () => {
+    const seen: Record<string, string>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      seen.push(init.headers as Record<string, string>)
+      return new Response(JSON.stringify(payload), { status: 200 })
+    }))
+    await new RouterLlmClient('https://router.example', token).complete(opts)
+    await new RouterLlmClient('https://router.example', token, { protectionBypass: 'b'.repeat(32) }).complete(opts)
+    expect(seen[0]!['x-vercel-protection-bypass']).toBeUndefined()
+    expect(seen[1]!['x-vercel-protection-bypass']).toBe('b'.repeat(32))
+    expect(() => new RouterLlmClient('https://router.example', token, { protectionBypass: 'short' })).toThrow('PROTECTION_BYPASS')
+    expect(() => new RouterLlmClient('https://router.example', token, { protectionBypass: `${'b'.repeat(20)}\r\nx: y` })).toThrow('PROTECTION_BYPASS')
+    const env = parseServerEnv({ GENX_ROUTER_URL: 'https://router.example', GENX_ROUTER_FORGE_TOKEN: token, GENX_ROUTER_PROTECTION_BYPASS: 'c'.repeat(32) })
+    await createLlmClient(env).complete(opts)
+    expect(seen[2]!['x-vercel-protection-bypass']).toBe('c'.repeat(32))
+  })
+
   it('refuses use in a browser', () => {
     vi.stubGlobal('window', {})
     expect(() => new RouterLlmClient('https://router.example', token)).toThrow('server-only')
