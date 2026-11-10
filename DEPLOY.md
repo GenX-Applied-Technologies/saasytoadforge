@@ -23,6 +23,10 @@ docker run -p 8787:8787 --env-file apps/agent-service/.env forge-agent
 
 ### Fly.io
 
+> Staging host for the Forge program: use `apps/agent-service/fly.staging.toml` and the
+> scripts in `apps/agent-service/scripts/staging/` (see `docs/staging-hosting.md`). The
+> commands below are the older generic path.
+
 ```
 fly launch --no-deploy --config apps/agent-service/fly.toml   # pick a unique app name
 fly secrets set OPENROUTER_API_KEY=... SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... \

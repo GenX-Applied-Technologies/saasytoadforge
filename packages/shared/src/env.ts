@@ -13,6 +13,16 @@ export const DEFAULT_AGENT_SERVICE_SECRET = 'forge-dev-insecure-secret-change-in
  */
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /**
+   * Where this agent-service runs. 'staging' turns on the fail-closed hosted checks in
+   * assertStagingEnv. 'production' is refused until Ron approves a production launch.
+   */
+  FORGE_DEPLOY_ENV: z.enum(['local', 'staging', 'production']).default('local'),
+  /** Git commit the image was built from (Docker build arg). Shown by /health. */
+  FORGE_BUILD_SHA: z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/)
+    .optional(),
   PORT: z.coerce.number().int().positive().default(8787),
 
   // Secrets (optional at boot; features degrade to mocks when absent).
@@ -24,6 +34,11 @@ export const serverEnvSchema = z.object({
   /** Agent-service-only Router origin and scoped app credential. Never expose to web. */
   GENX_ROUTER_URL: z.string().url().optional(),
   GENX_ROUTER_FORGE_TOKEN: z.string().min(32).optional(),
+  /**
+   * Vercel Deployment Protection bypass for a protected Router PREVIEW. Sent only to
+   * GENX_ROUTER_URL as x-vercel-protection-bypass; never logged or exposed to web.
+   */
+  GENX_ROUTER_PROTECTION_BYPASS: z.string().min(16).optional(),
   E2B_API_KEY: z.string().optional(),
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
@@ -85,6 +100,13 @@ export function parseServerEnv(raw: NodeJS.ProcessEnv = process.env): ServerEnv 
   }
   const env = serverEnvSchema.parse(cleaned)
 
+  if (env.FORGE_DEPLOY_ENV === 'production') {
+    throw new Error(
+      'FORGE_DEPLOY_ENV=production is not approved. Forge runs on staging only until a production launch is approved.',
+    )
+  }
+  if (env.FORGE_DEPLOY_ENV === 'staging') assertStagingEnv(env)
+
   // Refuse to boot with the public dev secret in production - it would let anyone forge
   // a token for any user and defeat tenant isolation.
   if (env.NODE_ENV === 'production') {
@@ -100,6 +122,49 @@ export function parseServerEnv(raw: NodeJS.ProcessEnv = process.env): ServerEnv 
     }
   }
   return env
+}
+
+/** Exact HTTPS origin (no path, no wildcard). */
+function isHttpsOrigin(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.origin === value && !value.includes('*')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Hosted staging must fail closed instead of degrading to mocks or direct providers.
+ * Every problem is listed at once, by variable NAME only (never a value).
+ */
+export function assertStagingEnv(env: ServerEnv): void {
+  const problems: string[] = []
+  if (env.NODE_ENV !== 'production') problems.push('NODE_ENV must be production on staging')
+  if (
+    env.AGENT_SERVICE_SECRET === DEFAULT_AGENT_SERVICE_SECRET ||
+    env.AGENT_SERVICE_SECRET.length < 32
+  )
+    problems.push('AGENT_SERVICE_SECRET must be a unique 32+ character secret')
+  const origins = env.ALLOWED_ORIGINS.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (origins.length === 0 || !origins.every(isHttpsOrigin))
+    problems.push('ALLOWED_ORIGINS must list exact https:// web origins')
+  if (!env.GENX_ROUTER_URL || !env.GENX_ROUTER_FORGE_TOKEN)
+    problems.push('GENX_ROUTER_URL and GENX_ROUTER_FORGE_TOKEN are required (every model call goes through GenX Router OS)')
+  else if (!isHttpsOrigin(env.GENX_ROUTER_URL.replace(/\/$/, '')))
+    problems.push('GENX_ROUTER_URL must be an https:// origin')
+  for (const name of ['OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY'] as const) {
+    if (env[name]) problems.push(`${name} must not be set on staging (direct provider keys bypass the Router)`)
+  }
+  if (env.STRIPE_SECRET_KEY || env.STRIPE_WEBHOOK_SECRET)
+    problems.push('Stripe keys must not be set on staging (billing is tested separately)')
+  if (env.SANDBOX_PROVIDER !== 'e2b' || !env.E2B_API_KEY)
+    problems.push('SANDBOX_PROVIDER=e2b and E2B_API_KEY are required on staging (no mock sandbox)')
+  if (problems.length > 0) {
+    throw new Error(`Staging configuration refused: ${problems.join('; ')}.`)
+  }
 }
 
 export interface SecretStatus {

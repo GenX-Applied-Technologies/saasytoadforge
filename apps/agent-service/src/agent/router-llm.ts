@@ -99,7 +99,9 @@ export class RouterLlmClient implements LlmClient {
   /** The last successful call's Router request id, model and real usage (numbers only). */
   lastCall: RouterCallRecord | null = null
 
-  constructor(origin: string, private readonly appToken: string) {
+  private readonly protectionBypass: string | undefined
+
+  constructor(origin: string, private readonly appToken: string, opts: { protectionBypass?: string } = {}) {
     if ('window' in globalThis) throw new Error('RouterLlmClient is server-only')
     const url = new URL(origin)
     const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
@@ -108,6 +110,9 @@ export class RouterLlmClient implements LlmClient {
       throw new Error('GENX_ROUTER_URL must be an HTTPS origin (HTTP loopback for local tests only)')
     if (appToken.length < 32 || /[\r\n]/.test(appToken))
       throw new Error('GENX_ROUTER_FORGE_TOKEN must be an independent 32+ character app token')
+    if (opts.protectionBypass !== undefined && (opts.protectionBypass.length < 16 || /[\r\n]/.test(opts.protectionBypass)))
+      throw new Error('GENX_ROUTER_PROTECTION_BYPASS must be a 16+ character single-line secret')
+    this.protectionBypass = opts.protectionBypass
     this.endpoint = new URL(PATH, url).toString()
   }
 
@@ -121,7 +126,11 @@ export class RouterLlmClient implements LlmClient {
     try {
       res = await fetch(this.endpoint, {
         method: 'POST', redirect: 'error',
-        headers: { authorization: `Bearer ${this.appToken}`, 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${this.appToken}`, 'content-type': 'application/json',
+          // Only for a protected Router preview; Vercel strips it before the route sees it.
+          ...(this.protectionBypass ? { 'x-vercel-protection-bypass': this.protectionBypass } : {}),
+        },
         body, signal,
       })
     } catch {

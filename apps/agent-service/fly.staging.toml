@@ -1,0 +1,52 @@
+# Fly.io STAGING config for the SaaSyToad Forge agent-service. Never production.
+#
+# Deploy only through apps/agent-service/scripts/staging/deploy.sh (it creates exactly one
+# machine and one 1 GB volume, imports secrets from mode-600 files over stdin, and checks
+# /health). Run from the REPO ROOT so the build context includes packages/shared.
+# Cost (Fly pricing, iad): shared-cpu-1x/512MB $3.69 per 30 days if it never stops, plus
+# $0.15/month for the 1 GB volume. It auto-stops when idle, so the real bill is lower.
+
+app = "saasytoad-forge-agent-staging"
+primary_region = "iad"
+
+[build]
+  dockerfile = "apps/agent-service/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  FORGE_DEPLOY_ENV = "staging"
+  PORT = "8787"
+  SANDBOX_PROVIDER = "e2b"
+  # Durable home of the sandbox spend ledger (volume below). Single machine only.
+  FORGE_DATA_DIR = "/data"
+
+[mounts]
+  source = "forge_staging_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # Stop when idle (no connections) and start on the next request: compute is billed only
+  # while running. Workspaces are in-memory, so a stop ends them; their sandboxes are
+  # killed on SIGTERM and any leftovers are reaped at the next boot.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/ready"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

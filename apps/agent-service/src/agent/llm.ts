@@ -380,7 +380,9 @@ export function createLlmClient(
   if (env.GENX_ROUTER_URL || env.GENX_ROUTER_FORGE_TOKEN) {
     if (!env.GENX_ROUTER_URL || !env.GENX_ROUTER_FORGE_TOKEN)
       throw new Error('Both GENX_ROUTER_URL and GENX_ROUTER_FORGE_TOKEN are required')
-    return new RouterLlmClient(env.GENX_ROUTER_URL, env.GENX_ROUTER_FORGE_TOKEN)
+    return new RouterLlmClient(env.GENX_ROUTER_URL, env.GENX_ROUTER_FORGE_TOKEN, {
+      protectionBypass: env.GENX_ROUTER_PROTECTION_BYPASS,
+    })
   }
   // A user-supplied key takes precedence so "bring your own Claude" works end to end.
   if (customKeys?.anthropic)

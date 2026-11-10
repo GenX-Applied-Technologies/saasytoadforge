@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { buildServer } from './server'
 
 describe('agent-service health', () => {
@@ -6,7 +6,43 @@ describe('agent-service health', () => {
     const app = buildServer()
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ status: 'ok', service: 'agent-service' })
+    expect(res.json()).toEqual({ status: 'ok', service: 'agent-service', version: 'dev', deployEnv: 'local', region: null })
+    await app.close()
+  })
+
+  it('is ready locally on mocks, and reports what it would use without secrets', async () => {
+    for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'E2B_API_KEY', 'GENX_ROUTER_URL', 'GENX_ROUTER_FORGE_TOKEN']) vi.stubEnv(k, '')
+    const app = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/ready' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ready: true, deployEnv: 'local', checks: { modelClient: 'mock', sandbox: 'mock' } })
+    await app.close()
+    vi.unstubAllEnvs()
+  })
+})
+
+describe('hosted staging boot', () => {
+  const staging = {
+    NODE_ENV: 'production', FORGE_DEPLOY_ENV: 'staging', AGENT_SERVICE_SECRET: 's'.repeat(48),
+    ALLOWED_ORIGINS: 'https://forge-web-git-staging.vercel.app', GENX_ROUTER_URL: 'https://router-git-forge.vercel.app',
+    GENX_ROUTER_FORGE_TOKEN: 't'.repeat(64), SANDBOX_PROVIDER: 'e2b', E2B_API_KEY: 'e2b_placeholder', FORGE_BUILD_SHA: 'abc1234',
+    // The host shell may carry direct provider keys; staging must not see them.
+    GEMINI_API_KEY: '', ANTHROPIC_API_KEY: '', OPENROUTER_API_KEY: '',
+  }
+  afterEach(() => vi.unstubAllEnvs())
+  it('refuses to boot with an incomplete staging config (no mock fallback)', () => {
+    for (const [k, v] of Object.entries({ ...staging, E2B_API_KEY: '' })) vi.stubEnv(k, v)
+    expect(() => buildServer()).toThrow('Staging configuration refused')
+  })
+  it('boots on the Router client and a real sandbox provider and reports the build', async () => {
+    for (const [k, v] of Object.entries(staging)) vi.stubEnv(k, v)
+    const app = buildServer()
+    const health = await app.inject({ method: 'GET', url: '/health' })
+    expect(health.json()).toMatchObject({ status: 'ok', version: 'abc1234', deployEnv: 'staging' })
+    const ready = await app.inject({ method: 'GET', url: '/ready' })
+    expect(ready.statusCode).toBe(200)
+    expect(ready.json()).toEqual({ ready: true, deployEnv: 'staging', checks: { modelClient: 'genx-router', sandbox: 'real' } })
+    expect(ready.body).not.toContain('t'.repeat(64))
     await app.close()
   })
 })
