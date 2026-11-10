@@ -2,7 +2,7 @@
  * The sandbox abstraction. Untrusted / agent-generated code runs ONLY through a
  * SandboxProvider (see SECURITY in ARCHITECTURE.md). The host control plane never
  * executes untrusted code. Default implementation targets microVM/gVisor isolation;
- * the interface stays clean so E2B, Daytona, or WebContainers can swap in.
+ * the interface stays clean so another provider can swap in.
  */
 
 export interface ExecResult {
@@ -73,4 +73,8 @@ export interface SandboxProvider {
   /** Restore the workspace filesystem to a prior checkpoint ref from `checkpoint`. */
   restore(id: string, ref: string): Promise<void>
   destroy(id: string): Promise<void>
+  /** Kill every sandbox this process owns (graceful shutdown). Optional for in-memory providers. */
+  shutdown?(): Promise<void>
+  /** Kill leftover sandboxes from an earlier crash of this deployment; returns how many. */
+  reapOrphans?(): Promise<number>
 }

@@ -31,9 +31,11 @@ feature-completeness) with disposition. "Fixed" = closed + tested this pass.
 
 ## Known gaps — honestly documented, not yet closed
 These need real infra/secrets or are deliberately deferred. Do not claim them as done.
-- **E2B egress is a no-op.** `e2b-provider.setEgressAllowlist` does nothing; default-deny
-  egress is enforced only by the *mock*. Real enforcement needs an E2B template/firewall
-  network policy. SECURITY.md 6.2 is downgraded accordingly.
+- **E2B egress is implemented but not yet proven live.** The provider uses E2B SDK 2.x
+  network rules (deny all / exact-hostname allowlist, no DNS server) with read-back
+  verification; tested only against a fake E2B API. The live proof is a paid step
+  (docs/verification/step2.md). E2B filters by HTTP Host / TLS SNI on ports 80/443; other
+  ports to an allowed name are not reachable.
 - **Spend is a fixed pre-charge estimate**, never reconciled to real token usage from the
   model response. A long run can overrun the cap within one task.
 - **"Fusion" deep reasoning is routing only** — it swaps the model id and inflates the cost
@@ -41,5 +43,6 @@ These need real infra/secrets or are deliberately deferred. Do not claim them as
 - **Screenshots default to the simulated SVG** (`MockBrowserTool`); the real
   `PlaywrightBrowserTool` exists but is not the wired default.
 - **No file CRUD in the tree** (create/delete/rename) and **no session-history browser** UI.
-- **Daytona / WebContainers providers** are not implemented (mock fallback).
+- **Only the E2B provider is real.** Daytona was removed from the config (it was a stub that
+  silently fell back to the mock); selecting e2b without its key/cap/data dir now refuses to boot.
 - **Lighthouse perf gate** runs at deploy against the real editor route.

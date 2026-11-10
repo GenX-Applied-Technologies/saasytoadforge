@@ -10,16 +10,21 @@ Agent- and user-generated code runs ONLY through `SandboxProvider`. The control 
   to one sandbox id; browser for screenshots). No host filesystem, no control-plane network,
   no secret-access tools (mission section 10).
 - `MockSandboxProvider` refuses to execute arbitrary commands (exit 127); it never shells out
-  to the host. Real isolation is E2B microVM / Daytona gVisor (drop-in behind the interface).
+  to the host. Real isolation is the E2B microVM provider (the mock is refused when NODE_ENV=production).
 - Status: enforced by construction. Real microVM execution pending `E2B_API_KEY`.
 
 ## 6.2 Egress
 Default-deny per sandbox; allowlist = package registries + the user's declared domains.
 - `SandboxProvider.setEgressAllowlist` + `EGRESS_ALLOWLIST` env (`parseEgressAllowlist`).
-- Status: **enforced only on the mock provider** (blocked-egress test). **On the real E2B
-  provider `setEgressAllowlist` is currently a no-op** - default-deny is NOT yet enforced for
-  real workloads; it needs an E2B template/firewall network policy. See GAPS.md. Do not treat
-  6.2 as satisfied in production.
+- E2B provider (step 2): every sandbox is created with egress already restricted by E2B SDK
+  2.x network rules: empty allowlist = `allowInternetAccess: false`; otherwise
+  `denyOut: [0.0.0.0/0]`, `allowOut: <exact hostnames>`, `dnsServers: []` (no resolver
+  reachable; names are pinned in /etc/hosts). Wildcards, IPs and CIDRs are refused. The
+  policy is read back from E2B and the sandbox is killed if it differs. `setEgressAllowlist`
+  replaces the rules, verifies them, and tightens to deny-all on any failure.
+- Status: **unit-tested against a fake E2B API only.** The live egress proof
+  (scripts/step2-live.ts) is a paid step awaiting approval; until it passes, do not treat 6.2
+  as proven on real sandboxes. See docs/verification/step2.md.
 
 ## 6.3 Side-effect approvals
 Reads, plans, edits, and test runs proceed freely; irreversible side effects require explicit
@@ -58,6 +63,6 @@ Per-user and global caps enforced before each model call, backed by a Postgres l
   signed per-user tokens, an auth hook + WS token check, `Workspace.owner` enforced on every
   route (cross-tenant now 404s), CORS pinned, per-user spend cap, `secure` cookie, and several
   correctness fixes (concurrent-task guard, approval cleanup, workspace delete). 6.1 / 6.3 / 6.5
-  strengthened. Remaining honest gaps (E2B egress no-op, spend pre-charge, Supabase/Stripe not
+  strengthened. Remaining honest gaps (E2B egress not yet proven live, spend pre-charge, Supabase/Stripe not
   wired, Fusion config-only) are tracked in GAPS.md - the running service does NOT yet enforce
   the full model the earlier "PASS" lines implied.

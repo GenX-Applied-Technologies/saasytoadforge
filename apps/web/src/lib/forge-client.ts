@@ -154,9 +154,14 @@ export async function createCheckout(
   return res.json() as Promise<{ url: string; mode: 'mock' | 'stripe' }>
 }
 
-// Public (no auth): policy + pricing display.
+/** Full config (models, caps, secret-present flags) requires a signed agent token. */
 export async function getConfig(): Promise<ConfigSummary> {
-  return asJson(await fetch(`${BASE}/config`))
+  return authed('/config')
+}
+
+/** Harmless public subset: no model IDs, spend caps, or secret-present flags. */
+export async function getPublicConfig(): Promise<{ service: string; billingConfigured: boolean }> {
+  return asJson(await fetch(`${BASE}/config/public`))
 }
 
 export async function getPlans(): Promise<Plan[]> {

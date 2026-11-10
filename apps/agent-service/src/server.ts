@@ -5,8 +5,10 @@ import Fastify, {
   type FastifyPluginAsync,
 } from 'fastify'
 import cors from '@fastify/cors'
+import helmet from '@fastify/helmet'
 import websocket from '@fastify/websocket'
 import rateLimit from '@fastify/rate-limit'
+import type { HTTPMethods } from 'fastify'
 import {
   parseServerEnv,
   parseEgressAllowlist,
@@ -20,7 +22,7 @@ import {
   type ConfigSummary,
   type DeployResult,
 } from '@forge/shared'
-import { createSandboxProvider, MockSandboxProvider } from './sandbox'
+import { createSandboxProvider, E2BSandboxProvider, MockSandboxProvider, SandboxError, SANDBOX_ERROR_STATUS } from './sandbox'
 import { WorkspaceManager, type Workspace } from './workspace/manager'
 import { assertSafePath, PathError } from './lib/paths'
 import { Agent, ApprovalGate, QuestionGate } from './agent/agent'
@@ -32,7 +34,7 @@ import { createToolSet, MockBrowserTool, type BrowserTool } from './agent/tools'
 import { SpendLedger, costForTokens, type SpendCaps } from './lib/spend'
 import { modelRouting, resolveDeepModel, DEEP_REQUEST_CAP_USD } from './agent/router'
 import { logger } from './lib/logger'
-import { createBillingProvider } from './billing/billing'
+import { createBillingProvider, BillingNotConfiguredError } from './billing/billing'
 import { InMemorySessionStore } from './persistence/store'
 import { SupabaseSessionStore } from './persistence/supabase-store'
 
@@ -43,6 +45,10 @@ declare module 'fastify' {
     /** Raw request body, captured for Stripe webhook signature verification. */
     rawBody?: Buffer
   }
+  interface FastifyInstance {
+    /** The sandbox provider this server owns (boot-time orphan reaping, shutdown). */
+    sandboxProvider: SandboxProvider
+  }
 }
 
 export interface ServerDeps {
@@ -51,9 +57,37 @@ export interface ServerDeps {
   ledger: SpendLedger
 }
 
-// /webhooks/stripe is public to the auth hook because Stripe sends no Bearer token;
-// it authenticates instead by verifying the Stripe signature against the raw body.
-const PUBLIC_PATHS = new Set(['/health', '/ready', '/config', '/billing/plans', '/webhooks/stripe'])
+// /webhooks/stripe is public to the auth hook because a billing provider sends no
+// Bearer token; the route must still verify a signature or refuse with 501 when
+// billing is unconfigured. The path is Stripe-named; Ron bills with Square — a
+// Square provider is not built here, and this route must never accept an
+// unverified event. Full /config is authenticated; /config/public is a harmless subset.
+const PUBLIC_PATHS = new Set([
+  '/health',
+  '/ready',
+  '/config/public',
+  '/billing/plans',
+  '/webhooks/stripe',
+])
+
+const HTTP_METHODS: HTTPMethods[] = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+
+/** Path used for auth and 405 checks: strip the query and a trailing slash. */
+function requestPath(url: string): string {
+  const raw = url.split('?')[0] ?? ''
+  if (raw.length > 1 && raw.endsWith('/')) return raw.replace(/\/+$/, '') || '/'
+  return raw
+}
+
+/** Malformed JSON must answer 400 {error:'invalid json'}, never a raw parser message. */
+class InvalidJsonError extends Error {
+  statusCode = 400
+  code = 'invalid_json'
+  constructor() {
+    super('invalid json')
+    this.name = 'InvalidJsonError'
+  }
+}
 const WS_ROUTE = /\/workspaces\/[^/]+\/(shell|agent)$/
 
 /** Estimated tokens per agent run, feeding the spend-cap pre-charge. */
@@ -115,7 +149,31 @@ export function buildServer(deps?: Partial<ServerDeps>): FastifyInstance {
     .map((s) => s.trim())
     .filter(Boolean)
 
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: false, routerOptions: { ignoreTrailingSlash: true } })
+
+  // Typed sandbox failures (spend cap, concurrency, create failure/timeout, egress, gone) answer
+  // with their own status and a stable code; the message is fixed text, never provider output.
+  // JSON parse failures are mapped to a stable 400 and never leak the parser message.
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof SandboxError) {
+      return reply.code(SANDBOX_ERROR_STATUS[err.code]).send({ error: err.code, message: err.message })
+    }
+    const code = (err as { code?: string }).code
+    if (
+      err instanceof InvalidJsonError ||
+      err instanceof SyntaxError ||
+      code === 'FST_ERR_CTP_INVALID_JSON_BODY' ||
+      (err instanceof Error && err.message === 'invalid json')
+    ) {
+      return reply.code(400).send({ error: 'invalid json' })
+    }
+    return reply.send(err)
+  })
+  app.decorate('sandboxProvider', provider)
+  // Kill every sandbox this process owns when the server stops (SIGTERM, Fly auto-stop).
+  app.addHook('onClose', async () => {
+    await provider.shutdown?.()
+  })
 
   // Parse JSON ourselves so we can retain the raw bytes for Stripe webhook signature
   // verification. Empty bodies (common on POST/DELETE with no payload) parse to {}.
@@ -128,11 +186,23 @@ export function buildServer(deps?: Partial<ServerDeps>): FastifyInstance {
     }
     try {
       done(null, JSON.parse(buf.toString('utf8')))
-    } catch (err) {
-      done(err instanceof Error ? err : new Error('invalid json'), undefined)
+    } catch {
+      done(new InvalidJsonError(), undefined)
     }
   })
 
+  void app.register(helmet, {
+    global: true,
+    hsts: { maxAge: 31536000, includeSubDomains: true },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    referrerPolicy: { policy: 'no-referrer' },
+    xFrameOptions: { action: 'deny' },
+  })
   void app.register(cors, {
     origin: allowedOrigins.length > 0 ? allowedOrigins : ['http://localhost:3000'],
   })
@@ -142,6 +212,20 @@ export function buildServer(deps?: Partial<ServerDeps>): FastifyInstance {
   })
   void app.register(websocket)
   void app.register(routes(provider, workspaces, env, browser, ledger, bootLlm.kind))
+
+  app.setNotFoundHandler((req, reply) => {
+    const path = requestPath(req.url)
+    const allowed = HTTP_METHODS.filter((method) => app.hasRoute({ method, url: path }))
+    if (allowed.length > 0) {
+      const allow = [...new Set(allowed)]
+      if (allow.includes('GET') && !allow.includes('HEAD')) allow.push('HEAD')
+      return reply
+        .code(405)
+        .header('Allow', allow.join(', '))
+        .send({ error: 'method not allowed' })
+    }
+    return reply.code(404).send({ error: 'not found' })
+  })
 
   return app
 }
@@ -197,7 +281,7 @@ function routes(
     // Websocket upgrades authenticate via ?token= in their own handlers.
     app.addHook('onRequest', async (req, reply) => {
       if (req.method === 'OPTIONS') return // CORS preflight
-      const path = req.url.split('?')[0] ?? ''
+      const path = requestPath(req.url)
       // Skip ONLY a genuine websocket upgrade to a websocket route (it authenticates via
       // ?token= in its handler). A spoofed Upgrade header on a REST route must still auth.
       if (WS_ROUTE.test(path) && (req.headers.upgrade ?? '').toLowerCase() === 'websocket') return
@@ -225,12 +309,25 @@ function routes(
     // Readiness: what this instance would actually use, checked without calling any paid API.
     // Hosted staging is ready only on the Router model client and a real (non-mock) sandbox.
     app.get('/ready', async (_req, reply) => {
+      let sandboxLedger: 'ok' | 'unavailable' | 'cap_reached' | 'n/a' = 'n/a'
+      if (provider instanceof E2BSandboxProvider) {
+        try {
+          const s = await provider.spendStatus()
+          sandboxLedger = s.committedNanoUsd >= s.capNanoUsd ? 'cap_reached' : 'ok'
+        } catch {
+          sandboxLedger = 'unavailable'
+        }
+      }
       const checks = {
         modelClient: modelClientKind,
         sandbox: provider instanceof MockSandboxProvider ? 'mock' : 'real',
+        sandboxLedger,
       }
       const hosted = env.FORGE_DEPLOY_ENV !== 'local'
-      const ready = !hosted || (checks.modelClient === 'genx-router' && checks.sandbox === 'real')
+      // A reached cap is still "ready" (the service answers 402 per request); a broken ledger is not.
+      const ready =
+        !hosted ||
+        (checks.modelClient === 'genx-router' && checks.sandbox === 'real' && sandboxLedger !== 'unavailable')
       return reply.code(ready ? 200 : 503).send({ ready, deployEnv: env.FORGE_DEPLOY_ENV, checks })
     })
 
@@ -247,6 +344,13 @@ function routes(
         users: ledger.allSpends(),
       }
     })
+
+    // Harmless public subset only. Model IDs, spend caps, and secret-present flags
+    // stay on the authenticated /config route.
+    app.get('/config/public', async () => ({
+      service: 'agent-service',
+      billingConfigured: billing.kind !== 'mock',
+    }))
 
     app.get(
       '/config',
@@ -279,7 +383,14 @@ function routes(
       return billing.createCheckout(body.planId, { customerEmail: email })
     })
 
+    // Stripe-named path kept for compatibility. Ron uses Square, not Stripe; this
+    // route must still refuse every unverified event. Unconfigured/mock → 501;
+    // a live provider with a bad signature → 400. Never answer 200 received:true
+    // without a verified fulfillment path.
     app.post('/webhooks/stripe', async (req, reply) => {
+      if (billing.kind === 'mock') {
+        return reply.code(501).send({ error: 'billing not configured' })
+      }
       const signature = req.headers['stripe-signature']
       if (typeof signature !== 'string' || !req.rawBody) {
         return reply.code(400).send({ error: 'missing signature or body' })
@@ -288,6 +399,9 @@ function routes(
       try {
         fulfillment = await billing.handleWebhook(req.rawBody.toString('utf8'), signature)
       } catch (err) {
+        if (err instanceof BillingNotConfiguredError) {
+          return reply.code(501).send({ error: 'billing not configured' })
+        }
         // Bad/forged signature, or webhook secret missing. Refuse, do not fulfil.
         logger.warn('stripe webhook rejected', {
           error: err instanceof Error ? err.message : String(err),

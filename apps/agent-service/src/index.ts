@@ -7,8 +7,11 @@ const app = buildServer()
 
 app
   .listen({ port: env.PORT, host: '0.0.0.0' })
-  .then((address) => {
+  .then(async (address) => {
     console.log(`agent-service listening on ${address}`)
+    // Kill sandboxes a previous run of this deployment left behind (crash, hard stop).
+    const reaped = await app.sandboxProvider.reapOrphans?.().catch(() => -1)
+    if (reaped === -1) console.warn('[sandbox] orphan check failed; will rely on E2B timeouts')
   })
   .catch((err) => {
     console.error(err)

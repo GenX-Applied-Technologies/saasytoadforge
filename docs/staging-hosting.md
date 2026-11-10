@@ -19,7 +19,7 @@ approved. Deploying is a PAID step (see `docs/verification/step0.md` for cost an
 Staging will not start (names listed, never values) unless: `NODE_ENV=production`; a unique
 32+ char `AGENT_SERVICE_SECRET`; `ALLOWED_ORIGINS` = exact https origins (no wildcard);
 `GENX_ROUTER_URL` (https) + `GENX_ROUTER_FORGE_TOKEN`; `SANDBOX_PROVIDER=e2b` +
-`E2B_API_KEY`. It also refuses `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`
+`E2B_API_KEY`, `FORGE_SANDBOX_SPEND_CAP_USD`, `FORGE_DATA_DIR` and a non-`base` `E2B_TEMPLATE`. It also refuses `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`
 (every model call goes through GenX Router OS) and Stripe keys (billing is tested separately).
 
 ## Environment variables
@@ -33,7 +33,7 @@ Staging will not start (names listed, never values) unless: `NODE_ENV=production
 | `GENX_ROUTER_FORGE_TOKEN` | Fly secret; same value as Router preview `ROUTER_OS_FORGE_APP_TOKEN` | yes | NEW staging token (rotation below) |
 | `GENX_ROUTER_PROTECTION_BYPASS` | Fly secret (optional) | yes | only if the Router preview has Deployment Protection |
 | `E2B_API_KEY` | Fly secret | yes | Ron creates it in the E2B console |
-| `E2B_TEMPLATE`, `FORGE_SANDBOX_SPEND_CAP_USD` | Fly secret (step 2) | no | template id; sandbox-time cap |
+| `E2B_TEMPLATE=forge-node22-phaser`, `FORGE_SANDBOX_SPEND_CAP_USD=3`, `FORGE_SANDBOX_TIMEOUT_MS=600000`, `FORGE_SANDBOX_MAX_CONCURRENT=2`, `FORGE_SANDBOX_VCPU=2`, `FORGE_SANDBOX_MEMORY_MB=4096`, `EGRESS_ALLOWLIST=` | `fly.staging.toml` `[env]` (step 2) | no | template; fail-closed sandbox-time cap (USD, hard max 10); ledger at `$FORGE_DATA_DIR/sandbox-spend-ledger.json` |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Fly secret (optional) | yes | session persistence; the `saasytoadforge` Supabase project is currently paused |
 
 Forge web (Vercel `saasytoadforge-web`, Preview only): `NEXT_PUBLIC_AGENT_SERVICE_URL=https://saasytoad-forge-agent-staging.fly.dev`,
@@ -68,4 +68,10 @@ fly auth login                                   # Ron, once, in a browser
 FORGE_STAGING_APPROVED=yes apps/agent-service/scripts/staging/deploy.sh
 apps/agent-service/scripts/staging/teardown.sh stop      # stop compute billing
 apps/agent-service/scripts/staging/teardown.sh destroy   # delete app + volume (all billing ends)
+# After a deploy, destroy any leftover remote builder (shared-cpu-8x / 8 GB):
+#   fly apps destroy fly-builder-<name> --yes
+# deploy.sh now does this automatically.
 ```
+
+Staging URL after the 2026-11-10 paid deploy: https://saasytoad-forge-agent-staging.fly.dev
+(`GET /health` and `GET /ready` returned 200). See `docs/verification/step0.md`.

@@ -17,7 +17,7 @@ Living document. Updated as the system takes shape.
                  +-----+-------------------+-----------------+
                        |                   |
             ModelRouter|                   | SandboxProvider
-        (OpenRouter)   |                   | (E2B microVM / Daytona gVisor / mock)
+        (OpenRouter)   |                   | (E2B microVM / mock)     
                        v                   v
                  +-----------+      +----------------------+
                  | OpenRouter|      | Isolated sandbox     |
@@ -40,8 +40,9 @@ Living document. Updated as the system takes shape.
 
 ## Key interface: SandboxProvider
 `packages/shared/src/sandbox.ts`. Untrusted/agent-generated code runs ONLY through this
-abstraction. Implementations: `mock` (Phase 0/1 dev), `e2b` (default, Firecracker microVM),
-`daytona` (gVisor, self-hostable). Callers never touch a provider SDK directly.
+abstraction. Implementations: `mock` (dev/tests only; refused when NODE_ENV=production) and `e2b`
+(Firecracker microVM, SDK 2.x network rules, fail-closed sandbox-time cap; see
+docs/verification/step2.md). Callers never touch a provider SDK directly.
 
 ## Security model (see Hard Constraints, mission section 6)
 - **Isolation**: host never runs untrusted code; microVM/gVisor only. Plain Docker is not an

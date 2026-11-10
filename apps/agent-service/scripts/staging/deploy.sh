@@ -16,8 +16,22 @@ if ! fly volumes list --app "$FORGE_STAGING_APP" --json | grep -q '"name": *"for
   fly volumes create forge_staging_data --app "$FORGE_STAGING_APP" --region iad --size 1 --count 1 --yes >/dev/null
 fi
 "$(dirname "$0")/import-fly-secrets.sh"
+# --depot=false: Depot timed out on this box; Fly's own remote builder works.
+# Destroy that builder after deploy (it is a shared-cpu-8x / 8 GB machine).
 fly deploy --config "$CONFIG" --app "$FORGE_STAGING_APP" --ha=false \
-  --build-arg "FORGE_BUILD_SHA=$(git rev-parse HEAD)" --yes
+  --build-arg "FORGE_BUILD_SHA=$(git rev-parse HEAD)" --yes --depot=false
+# Remote builders are shared-cpu-8x / 8 GB. Destroy them so they cannot keep billing
+# toward the staging cap. The next deploy will create a new one if needed.
+fly apps list --json | python3 -c '
+import json, sys
+for a in json.load(sys.stdin):
+    n = a.get("Name") or a.get("name") or a.get("ID") or ""
+    if str(n).startswith("fly-builder-"):
+        print(n)
+' | while read -r builder; do
+  [ -n "$builder" ] && fly apps destroy "$builder" --yes
+done
+
 # Exactly one machine: the ledger volume and in-memory workspaces are single-instance.
 fly scale count 1 --app "$FORGE_STAGING_APP" --yes >/dev/null
 if fly ips list --app "$FORGE_STAGING_APP" --json | grep -q '"Type": *"v4"'; then

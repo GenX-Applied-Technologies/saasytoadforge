@@ -5,7 +5,7 @@
   "description": "SaaSyToad Forge - an agent-first, web-based coding workspace.",
   "packageManager": "pnpm@9.15.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "lint": "eslint .",

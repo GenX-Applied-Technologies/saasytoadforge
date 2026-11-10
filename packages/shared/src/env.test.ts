@@ -79,6 +79,7 @@ describe('hosted staging fails closed', () => {
     NODE_ENV: 'production', FORGE_DEPLOY_ENV: 'staging', AGENT_SERVICE_SECRET: 's'.repeat(48),
     ALLOWED_ORIGINS: 'https://forge-web-git-staging.vercel.app', GENX_ROUTER_URL: 'https://router-git-forge.vercel.app',
     GENX_ROUTER_FORGE_TOKEN: 't'.repeat(64), SANDBOX_PROVIDER: 'e2b', E2B_API_KEY: 'e2b_placeholder',
+    E2B_TEMPLATE: 'forge-node22-phaser', FORGE_SANDBOX_SPEND_CAP_USD: '3', FORGE_DATA_DIR: '/data',
   }
   it('accepts a complete staging configuration', () => {
     expect(parseServerEnv(staging as NodeJS.ProcessEnv).FORGE_DEPLOY_ENV).toBe('staging')
@@ -100,6 +101,9 @@ describe('hosted staging fails closed', () => {
     [{ STRIPE_SECRET_KEY: 'sk_test_x' }, 'Stripe'],
     [{ SANDBOX_PROVIDER: 'mock' }, 'E2B_API_KEY'],
     [{ E2B_API_KEY: undefined }, 'E2B_API_KEY'],
+    [{ FORGE_SANDBOX_SPEND_CAP_USD: undefined }, 'FORGE_SANDBOX_SPEND_CAP_USD'],
+    [{ FORGE_DATA_DIR: undefined }, 'FORGE_DATA_DIR'],
+    [{ E2B_TEMPLATE: undefined }, 'E2B_TEMPLATE'],
   ])('refuses %j', (patch, name) => {
     let message = ''
     try { parseServerEnv({ ...staging, ...patch } as NodeJS.ProcessEnv) } catch (e) { message = (e as Error).message }
