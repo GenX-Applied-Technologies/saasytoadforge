@@ -1,6 +1,6 @@
 import type { ServerEnv } from '@forge/shared'
 import { RouterLlmClient } from './router-llm'
-export { RouterLlmClient } from './router-llm'
+export { RouterLlmClient, RouterLlmError } from './router-llm'
 
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant'
@@ -392,5 +392,8 @@ export function createLlmClient(
   if (env.OPENROUTER_API_KEY) return new OpenRouterLlmClient(env.OPENROUTER_API_KEY)
   // Server-side Gemini fallback when no OpenRouter/Anthropic key is configured.
   if (env.GEMINI_API_KEY) return new GeminiLlmClient(env.GEMINI_API_KEY, env.GOOGLE_MODEL)
+  // Fail closed: production never answers with the offline mock.
+  if (env.NODE_ENV === 'production')
+    throw new Error('No model provider is configured; refusing the offline mock in production')
   return new MockLlmClient()
 }

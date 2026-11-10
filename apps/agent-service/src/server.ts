@@ -102,6 +102,9 @@ async function serveWorkspace(
 
 export function buildServer(deps?: Partial<ServerDeps>): FastifyInstance {
   const env = parseServerEnv()
+  // Fail at boot, not mid-request: a partial Router config, or no model provider in
+  // production, refuses to start rather than silently running on the offline mock.
+  createLlmClient(env)
   const provider = deps?.provider ?? createSandboxProvider(env)
   const browser = deps?.browser ?? new MockBrowserTool()
   const ledger = deps?.ledger ?? new SpendLedger()
@@ -587,6 +590,17 @@ function routes(
           return
         }
 
+        // Resolve the model client before any spend is recorded. A misconfigured
+        // Router (or no provider in production) fails closed with a clear error.
+        let llmClient: ReturnType<typeof createLlmClient>
+        try {
+          llmClient = createLlmClient(env, cmd.customKeys)
+        } catch (err) {
+          send({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+          send({ type: 'done', ok: false })
+          return
+        }
+
         // ── Model tier resolution (fusion-safe) ──────────────────────────────
         // modelTier is the new field; deep is kept for backward compat.
         //   fast     → MODEL_FAST      (cheapest, free models)
@@ -671,7 +685,6 @@ function routes(
           owner: isOwner,
         })
 
-        const llmClient = createLlmClient(env, cmd.customKeys)
         // The built-in /schedule and /grill-me flows are handled by Agent.run regardless
         // of model. Every other task runs the real tool-use loop when a model is available,
         // and the deterministic planner when running on mocks.

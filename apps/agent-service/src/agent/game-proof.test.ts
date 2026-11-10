@@ -26,7 +26,8 @@ it('mock Router → real client/planner/agent → existing mock sandbox; no buil
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     expect(url).toBe('https://mock-router.example/api/forge/coding-complete')
     expect(JSON.parse(init.body as string).messages.at(-1).content).toContain('Phaser')
-    return Response.json({ text: JSON.stringify(plan), provider: 'together', modelId: 'deepseek-ai/DeepSeek-V4.1-Flash-1017' })
+    return Response.json({ text: JSON.stringify(plan), provider: 'together', modelId: 'deepseek-ai/DeepSeek-V4.1-Flash-1017',
+      requestId: 'mock-req', usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0, costUsd: 0 } })
   })
   vi.stubGlobal('fetch', fetch) // network and LLM are mocked; actual Router tests live in Router repo
   const env = parseServerEnv({ GENX_ROUTER_URL: 'https://mock-router.example', GENX_ROUTER_FORGE_TOKEN: 'mock-test-only-app-credential-32-characters' })
