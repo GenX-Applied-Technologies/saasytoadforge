@@ -35,6 +35,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ['packages/game-template/src/**/*.js'],
+    languageOptions: { globals: { ...globals.browser } },
+    rules: { 'no-unused-vars': ['error', { argsIgnorePattern: '^_' }] },
+  },
+  {
+    files: ['packages/game-template/scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node } },
+  },
+  {
     files: ['apps/web/**/*.{ts,tsx}'],
     languageOptions: { globals: { ...globals.browser } },
   },

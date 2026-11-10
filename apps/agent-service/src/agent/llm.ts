@@ -1,4 +1,6 @@
 import type { ServerEnv } from '@forge/shared'
+import { RouterLlmClient } from './router-llm'
+export { RouterLlmClient, RouterLlmError } from './router-llm'
 
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant'
@@ -15,7 +17,7 @@ export interface CompleteOptions {
 export interface LlmClient {
   /** Streams chunks to onChunk (if provided) and resolves with the full text. */
   complete(opts: CompleteOptions): Promise<string>
-  readonly kind: 'mock' | 'openrouter' | 'anthropic' | 'google'
+  readonly kind: 'mock' | 'openrouter' | 'anthropic' | 'google' | 'genx-router'
 }
 
 /** Deterministic stand-in used until OPENROUTER_API_KEY is supplied. */
@@ -373,6 +375,13 @@ export function createLlmClient(
   env: ServerEnv,
   customKeys?: { anthropic?: string; google?: string },
 ): LlmClient {
+  // Explicit Router mode takes precedence over ALL direct/BYO providers. A partial
+  // configuration fails closed, never silently bypassing Router or using a mock.
+  if (env.GENX_ROUTER_URL || env.GENX_ROUTER_FORGE_TOKEN) {
+    if (!env.GENX_ROUTER_URL || !env.GENX_ROUTER_FORGE_TOKEN)
+      throw new Error('Both GENX_ROUTER_URL and GENX_ROUTER_FORGE_TOKEN are required')
+    return new RouterLlmClient(env.GENX_ROUTER_URL, env.GENX_ROUTER_FORGE_TOKEN)
+  }
   // A user-supplied key takes precedence so "bring your own Claude" works end to end.
   if (customKeys?.anthropic)
     return new AnthropicLlmClient(customKeys.anthropic, env.ANTHROPIC_MODEL)
@@ -383,5 +392,8 @@ export function createLlmClient(
   if (env.OPENROUTER_API_KEY) return new OpenRouterLlmClient(env.OPENROUTER_API_KEY)
   // Server-side Gemini fallback when no OpenRouter/Anthropic key is configured.
   if (env.GEMINI_API_KEY) return new GeminiLlmClient(env.GEMINI_API_KEY, env.GOOGLE_MODEL)
+  // Fail closed: production never answers with the offline mock.
+  if (env.NODE_ENV === 'production')
+    throw new Error('No model provider is configured; refusing the offline mock in production')
   return new MockLlmClient()
 }

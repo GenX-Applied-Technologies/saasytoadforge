@@ -21,6 +21,9 @@ export const serverEnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   /** Server-side Google Gemini key; used as a model fallback after OpenRouter. */
   GEMINI_API_KEY: z.string().optional(),
+  /** Agent-service-only Router origin and scoped app credential. Never expose to web. */
+  GENX_ROUTER_URL: z.string().url().optional(),
+  GENX_ROUTER_FORGE_TOKEN: z.string().min(32).optional(),
   E2B_API_KEY: z.string().optional(),
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
