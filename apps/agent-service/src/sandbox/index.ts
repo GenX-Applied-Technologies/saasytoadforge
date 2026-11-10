@@ -1,37 +1,50 @@
+import { join } from 'node:path'
 import type { SandboxProvider, ServerEnv } from '@forge/shared'
 import { MockSandboxProvider } from './mock-provider'
-import { E2BSandboxProvider } from './e2b-provider'
+import { E2BSandboxProvider, realE2BApi, type E2BApi } from './e2b-provider'
+import { SandboxSpendGuard } from './spend-guard'
+import { FileSpendLedger } from '../lib/file-spend-ledger'
 
 export { MockSandboxProvider } from './mock-provider'
-export { E2BSandboxProvider } from './e2b-provider'
+export { E2BSandboxProvider, realE2BApi } from './e2b-provider'
+export { SandboxError, SANDBOX_ERROR_STATUS } from './errors'
+
+export const SANDBOX_LEDGER_FILE = 'sandbox-spend-ledger.json'
 
 /**
- * Resolves the configured SandboxProvider. Callers depend only on the interface, so
- * swapping providers never touches business logic.
+ * Resolves the configured SandboxProvider. Callers depend only on the interface.
  *
- * E2B (microVM) and Daytona (gVisor) are the real isolation boundaries; they land as
- * soon as their credentials are supplied. Until then we degrade to the in-memory mock
- * so the rest of the system keeps building (never hard-block).
+ * Fails closed: SANDBOX_PROVIDER=e2b without its key, spend cap or data dir refuses to boot
+ * rather than silently using the mock, and the mock is refused when NODE_ENV=production. A key
+ * alone never switches providers; the choice is always explicit.
  */
-export function createSandboxProvider(env: ServerEnv): SandboxProvider {
+export function createSandboxProvider(env: ServerEnv, deps: { e2bApi?: E2BApi } = {}): SandboxProvider {
   switch (env.SANDBOX_PROVIDER) {
-    case 'e2b':
-      if (!env.E2B_API_KEY) {
-        console.warn('[sandbox] SANDBOX_PROVIDER=e2b but E2B_API_KEY missing; using mock provider')
-        return new MockSandboxProvider()
-      }
-      return new E2BSandboxProvider(env.E2B_API_KEY)
-    case 'daytona':
-      // TODO(phase1+): return new DaytonaSandboxProvider(env)
-      console.warn('[sandbox] Daytona provider not yet implemented; using mock provider')
-      return new MockSandboxProvider()
+    case 'e2b': {
+      const missing = (
+        [
+          ['E2B_API_KEY', env.E2B_API_KEY],
+          ['FORGE_SANDBOX_SPEND_CAP_USD', env.FORGE_SANDBOX_SPEND_CAP_USD],
+          ['FORGE_DATA_DIR', env.FORGE_DATA_DIR],
+        ] as const
+      )
+        .filter(([, v]) => !v)
+        .map(([k]) => k)
+      if (missing.length) throw new Error(`SANDBOX_PROVIDER=e2b refused: missing ${missing.join(', ')}.`)
+      const ledger = new FileSpendLedger(join(env.FORGE_DATA_DIR!, SANDBOX_LEDGER_FILE))
+      return new E2BSandboxProvider({
+        api: deps.e2bApi ?? realE2BApi(env.E2B_API_KEY!),
+        guard: new SandboxSpendGuard(ledger, env.FORGE_SANDBOX_SPEND_CAP_USD!),
+        template: env.E2B_TEMPLATE,
+        resources: { cpuCount: env.FORGE_SANDBOX_VCPU, memoryMB: env.FORGE_SANDBOX_MEMORY_MB },
+        timeoutMs: env.FORGE_SANDBOX_TIMEOUT_MS,
+        maxConcurrent: env.FORGE_SANDBOX_MAX_CONCURRENT,
+        deployment: `forge-${env.FORGE_DEPLOY_ENV}`,
+      })
+    }
     case 'mock':
-      // Real execution whenever a key is available: an E2B key alone upgrades the default
-      // mock to a real microVM, so users get real builds, tests, and deploys without also
-      // having to flip SANDBOX_PROVIDER. No key means we stay quietly on the mock.
-      if (env.E2B_API_KEY) {
-        console.info('[sandbox] E2B_API_KEY present; using the real E2B sandbox.')
-        return new E2BSandboxProvider(env.E2B_API_KEY)
+      if (env.NODE_ENV === 'production') {
+        throw new Error('SANDBOX_PROVIDER=mock is refused when NODE_ENV=production (no fake sandbox in hosted runs).')
       }
       return new MockSandboxProvider()
   }

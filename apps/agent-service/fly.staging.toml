@@ -19,6 +19,15 @@ primary_region = "iad"
   SANDBOX_PROVIDER = "e2b"
   # Durable home of the sandbox spend ledger (volume below). Single machine only.
   FORGE_DATA_DIR = "/data"
+  # Sandbox (step 2). Not secrets: reviewable here. The cap is the fail-closed sandbox-time
+  # ceiling in USD (code hard max 10); 10-minute sandboxes, at most 2 at once, 2 vCPU / 4 GiB.
+  E2B_TEMPLATE = "forge-node22-phaser"
+  FORGE_SANDBOX_SPEND_CAP_USD = "3"
+  FORGE_SANDBOX_TIMEOUT_MS = "600000"
+  FORGE_SANDBOX_MAX_CONCURRENT = "2"
+  FORGE_SANDBOX_VCPU = "2"
+  FORGE_SANDBOX_MEMORY_MB = "4096"
+  EGRESS_ALLOWLIST = ""
 
 [mounts]
   source = "forge_staging_data"

@@ -1,4 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { buildServer } from './server'
 
 describe('agent-service health', () => {
@@ -15,17 +18,19 @@ describe('agent-service health', () => {
     const app = buildServer()
     const res = await app.inject({ method: 'GET', url: '/ready' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ ready: true, deployEnv: 'local', checks: { modelClient: 'mock', sandbox: 'mock' } })
+    expect(res.json()).toEqual({ ready: true, deployEnv: 'local', checks: { modelClient: 'mock', sandbox: 'mock', sandboxLedger: 'n/a' } })
     await app.close()
     vi.unstubAllEnvs()
   })
 })
 
 describe('hosted staging boot', () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'forge-staging-'))
   const staging = {
     NODE_ENV: 'production', FORGE_DEPLOY_ENV: 'staging', AGENT_SERVICE_SECRET: 's'.repeat(48),
     ALLOWED_ORIGINS: 'https://forge-web-git-staging.vercel.app', GENX_ROUTER_URL: 'https://router-git-forge.vercel.app',
     GENX_ROUTER_FORGE_TOKEN: 't'.repeat(64), SANDBOX_PROVIDER: 'e2b', E2B_API_KEY: 'e2b_placeholder', FORGE_BUILD_SHA: 'abc1234',
+    E2B_TEMPLATE: 'forge-node22-phaser', FORGE_SANDBOX_SPEND_CAP_USD: '3', FORGE_DATA_DIR: dataDir,
     // The host shell may carry direct provider keys; staging must not see them.
     GEMINI_API_KEY: '', ANTHROPIC_API_KEY: '', OPENROUTER_API_KEY: '',
   }
@@ -41,7 +46,7 @@ describe('hosted staging boot', () => {
     expect(health.json()).toMatchObject({ status: 'ok', version: 'abc1234', deployEnv: 'staging' })
     const ready = await app.inject({ method: 'GET', url: '/ready' })
     expect(ready.statusCode).toBe(200)
-    expect(ready.json()).toEqual({ ready: true, deployEnv: 'staging', checks: { modelClient: 'genx-router', sandbox: 'real' } })
+    expect(ready.json()).toEqual({ ready: true, deployEnv: 'staging', checks: { modelClient: 'genx-router', sandbox: 'real', sandboxLedger: 'ok' } })
     expect(ready.body).not.toContain('t'.repeat(64))
     await app.close()
   })
@@ -72,5 +77,29 @@ describe('stripe webhook', () => {
     expect(res.statusCode).toBe(400)
     expect(res.json()).toEqual({ error: 'missing signature or body' })
     await app.close()
+  })
+})
+
+describe('sandbox failures over HTTP', () => {
+  it('maps typed sandbox errors to stable codes and statuses, never provider text', async () => {
+    const { mintAgentToken, DEFAULT_AGENT_SERVICE_SECRET } = await import('@forge/shared')
+    const { MockSandboxProvider, SandboxError } = await import('./sandbox')
+    const auth = { authorization: `Bearer ${mintAgentToken('alice', DEFAULT_AGENT_SERVICE_SECRET)}` }
+    const cases = [
+      ['sandbox_spend_cap_reached', 402],
+      ['sandbox_limit_reached', 429],
+      ['sandbox_create_failed', 503],
+      ['sandbox_create_timeout', 504],
+      ['sandbox_egress_unverified', 503],
+    ] as const
+    for (const [code, status] of cases) {
+      const provider = new MockSandboxProvider()
+      provider.create = async () => { throw new SandboxError(code) }
+      const app = buildServer({ provider })
+      const res = await app.inject({ method: 'POST', url: '/workspaces', headers: auth })
+      expect(res.statusCode).toBe(status)
+      expect(res.json()).toMatchObject({ error: code })
+      await app.close()
+    }
   })
 })

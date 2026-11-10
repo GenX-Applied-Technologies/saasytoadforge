@@ -152,13 +152,34 @@ describe('createSandboxProvider', () => {
     expect(provider).toBeInstanceOf(MockSandboxProvider)
   })
 
-  it('falls back to mock when e2b is selected without a key', () => {
+  it('refuses e2b without its key, spend cap and data dir (no silent mock fallback)', () => {
     const env = parseServerEnv({ SANDBOX_PROVIDER: 'e2b' } as NodeJS.ProcessEnv)
+    expect(() => createSandboxProvider(env)).toThrow(
+      'SANDBOX_PROVIDER=e2b refused: missing E2B_API_KEY, FORGE_SANDBOX_SPEND_CAP_USD, FORGE_DATA_DIR.',
+    )
+  })
+
+  it('never auto-upgrades the mock to E2B just because a key is present', () => {
+    const env = parseServerEnv({ E2B_API_KEY: 'e2b-test-key' } as NodeJS.ProcessEnv)
     expect(createSandboxProvider(env)).toBeInstanceOf(MockSandboxProvider)
   })
 
-  it('auto-upgrades to E2B when a key is present, even on the default provider', () => {
-    const env = parseServerEnv({ E2B_API_KEY: 'e2b-test-key' } as NodeJS.ProcessEnv)
+  it('builds the real E2B provider when fully configured (no network call at construction)', () => {
+    const env = parseServerEnv({
+      SANDBOX_PROVIDER: 'e2b', E2B_API_KEY: 'e2b-test-key', FORGE_SANDBOX_SPEND_CAP_USD: '3', FORGE_DATA_DIR: '/tmp/forge-test-data',
+    } as NodeJS.ProcessEnv)
     expect(createSandboxProvider(env)).toBeInstanceOf(E2BSandboxProvider)
+  })
+
+  it('refuses the mock provider when NODE_ENV=production', () => {
+    const env = parseServerEnv({ NODE_ENV: 'production', AGENT_SERVICE_SECRET: 'x'.repeat(40) } as NodeJS.ProcessEnv)
+    expect(() => createSandboxProvider(env)).toThrow('SANDBOX_PROVIDER=mock is refused when NODE_ENV=production')
+  })
+
+  it('rejects the removed daytona provider and out-of-range sandbox caps at parse time', () => {
+    expect(() => parseServerEnv({ SANDBOX_PROVIDER: 'daytona' } as NodeJS.ProcessEnv)).toThrow()
+    expect(() => parseServerEnv({ FORGE_SANDBOX_SPEND_CAP_USD: '11' } as NodeJS.ProcessEnv)).toThrow()
+    expect(() => parseServerEnv({ FORGE_SANDBOX_SPEND_CAP_USD: '0' } as NodeJS.ProcessEnv)).toThrow()
+    expect(() => parseServerEnv({ FORGE_DATA_DIR: 'relative/dir' } as NodeJS.ProcessEnv)).toThrow()
   })
 })

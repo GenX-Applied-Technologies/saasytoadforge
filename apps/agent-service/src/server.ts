@@ -20,7 +20,7 @@ import {
   type ConfigSummary,
   type DeployResult,
 } from '@forge/shared'
-import { createSandboxProvider, MockSandboxProvider } from './sandbox'
+import { createSandboxProvider, E2BSandboxProvider, MockSandboxProvider, SandboxError, SANDBOX_ERROR_STATUS } from './sandbox'
 import { WorkspaceManager, type Workspace } from './workspace/manager'
 import { assertSafePath, PathError } from './lib/paths'
 import { Agent, ApprovalGate, QuestionGate } from './agent/agent'
@@ -42,6 +42,10 @@ declare module 'fastify' {
     userEmail?: string
     /** Raw request body, captured for Stripe webhook signature verification. */
     rawBody?: Buffer
+  }
+  interface FastifyInstance {
+    /** The sandbox provider this server owns (boot-time orphan reaping, shutdown). */
+    sandboxProvider: SandboxProvider
   }
 }
 
@@ -116,6 +120,20 @@ export function buildServer(deps?: Partial<ServerDeps>): FastifyInstance {
     .filter(Boolean)
 
   const app = Fastify({ logger: false })
+
+  // Typed sandbox failures (spend cap, concurrency, create failure/timeout, egress, gone) answer
+  // with their own status and a stable code; the message is fixed text, never provider output.
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof SandboxError) {
+      return reply.code(SANDBOX_ERROR_STATUS[err.code]).send({ error: err.code, message: err.message })
+    }
+    return reply.send(err)
+  })
+  app.decorate('sandboxProvider', provider)
+  // Kill every sandbox this process owns when the server stops (SIGTERM, Fly auto-stop).
+  app.addHook('onClose', async () => {
+    await provider.shutdown?.()
+  })
 
   // Parse JSON ourselves so we can retain the raw bytes for Stripe webhook signature
   // verification. Empty bodies (common on POST/DELETE with no payload) parse to {}.
@@ -225,12 +243,25 @@ function routes(
     // Readiness: what this instance would actually use, checked without calling any paid API.
     // Hosted staging is ready only on the Router model client and a real (non-mock) sandbox.
     app.get('/ready', async (_req, reply) => {
+      let sandboxLedger: 'ok' | 'unavailable' | 'cap_reached' | 'n/a' = 'n/a'
+      if (provider instanceof E2BSandboxProvider) {
+        try {
+          const s = await provider.spendStatus()
+          sandboxLedger = s.committedNanoUsd >= s.capNanoUsd ? 'cap_reached' : 'ok'
+        } catch {
+          sandboxLedger = 'unavailable'
+        }
+      }
       const checks = {
         modelClient: modelClientKind,
         sandbox: provider instanceof MockSandboxProvider ? 'mock' : 'real',
+        sandboxLedger,
       }
       const hosted = env.FORGE_DEPLOY_ENV !== 'local'
-      const ready = !hosted || (checks.modelClient === 'genx-router' && checks.sandbox === 'real')
+      // A reached cap is still "ready" (the service answers 402 per request); a broken ledger is not.
+      const ready =
+        !hosted ||
+        (checks.modelClient === 'genx-router' && checks.sandbox === 'real' && sandboxLedger !== 'unavailable')
       return reply.code(ready ? 200 : 503).send({ ready, deployEnv: env.FORGE_DEPLOY_ENV, checks })
     })
 

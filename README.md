@@ -14,7 +14,7 @@ reviewable artifacts (plan, diff, test output, screenshot).
 - **Web**: Next.js 15 (App Router), TypeScript (strict), Tailwind v4 -> Vercel
 - **Agent service**: Fastify (websockets + agent loop + sandbox orchestration) -> Railway/Fly
 - **Shared**: zod env schema, `SandboxProvider` interface, domain types
-- **Sandbox**: E2B (microVM) default, behind a clean `SandboxProvider` (Daytona/WebContainers swappable)
+- **Sandbox**: E2B (microVM) default, behind a clean `SandboxProvider` (other providers can swap in)
 - **Models**: OpenRouter via a config-driven `ModelRouter` (fast / frontier / Fusion deep-reasoning)
 - **Persistence**: Supabase Postgres + Auth + RLS
 

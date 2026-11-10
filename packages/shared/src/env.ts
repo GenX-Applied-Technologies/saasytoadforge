@@ -69,7 +69,21 @@ export const serverEnvSchema = z.object({
   ALLOWED_ORIGINS: z.string().default(''),
 
   // Sandbox + egress safety.
-  SANDBOX_PROVIDER: z.enum(['mock', 'e2b', 'daytona']).default('mock'),
+  /** 'mock' is in-memory (dev/tests only; refused when NODE_ENV=production). 'e2b' is a real microVM. */
+  SANDBOX_PROVIDER: z.enum(['mock', 'e2b']).default('mock'),
+  /** E2B template name or id. Staging must name the Forge template explicitly. */
+  E2B_TEMPLATE: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/).default('base'),
+  /** Fail-closed cap (USD) on total E2B sandbox time recorded in the durable ledger. Required for e2b. */
+  FORGE_SANDBOX_SPEND_CAP_USD: z.coerce.number().positive().max(10).optional(),
+  /** Absolute directory for durable state (sandbox spend ledger). On Fly: the volume mount. */
+  FORGE_DATA_DIR: z.string().regex(/^\/[^\0]*$/).optional(),
+  /** Sandbox lifetime; E2B kills it at this point and the ledger reserves exactly this much. */
+  FORGE_SANDBOX_TIMEOUT_MS: z.coerce.number().int().min(60_000).max(3_600_000).default(600_000),
+  /** Most sandboxes this process will run at once. */
+  FORGE_SANDBOX_MAX_CONCURRENT: z.coerce.number().int().min(1).max(10).default(2),
+  /** Sandbox size the spend cap is priced at; a sandbox reporting more is killed. */
+  FORGE_SANDBOX_VCPU: z.coerce.number().int().min(1).max(8).default(2),
+  FORGE_SANDBOX_MEMORY_MB: z.coerce.number().int().min(512).max(8192).default(4096),
   /** Comma-separated egress allowlist applied to every sandbox (default-deny). */
   EGRESS_ALLOWLIST: z.string().default(''),
 
@@ -162,6 +176,11 @@ export function assertStagingEnv(env: ServerEnv): void {
     problems.push('Stripe keys must not be set on staging (billing is tested separately)')
   if (env.SANDBOX_PROVIDER !== 'e2b' || !env.E2B_API_KEY)
     problems.push('SANDBOX_PROVIDER=e2b and E2B_API_KEY are required on staging (no mock sandbox)')
+  if (!env.FORGE_SANDBOX_SPEND_CAP_USD)
+    problems.push('FORGE_SANDBOX_SPEND_CAP_USD is required on staging (fail-closed sandbox-time cap)')
+  if (!env.FORGE_DATA_DIR) problems.push('FORGE_DATA_DIR is required on staging (durable spend ledger)')
+  if (env.E2B_TEMPLATE === 'base')
+    problems.push('E2B_TEMPLATE must name the Forge template on staging (the base template has no toolchain)')
   if (problems.length > 0) {
     throw new Error(`Staging configuration refused: ${problems.join('; ')}.`)
   }

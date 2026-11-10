@@ -63,10 +63,11 @@ Forge **agent-service** environment (never browser/NEXT_PUBLIC):
 - `E2B_API_KEY`: later, after separate sandbox-spend approval.
 - `SANDBOX_PROVIDER=e2b`: explicit intent for the later real proof.
 - `EGRESS_ALLOWLIST`: empty/default-deny for an offline/prebuilt sandbox.
-  Existing E2B code uses all-or-nothing internet, NOT per-domain enforcement:
-  **any nonempty allowlist enables all outbound internet.** Do not set it merely
-  to allow npm; prebundle/preinstall reviewed dependencies or review a real
-  network-restricted template first. No Router/app/provider keys go into a sandbox.
+  Since step 2 the E2B provider enforces exact-hostname allowlists (deny all
+  else, no DNS server); the Forge template pre-installs the toolchain so the
+  default stays empty. No Router/app/provider keys go into a sandbox.
+- `E2B_TEMPLATE`, `FORGE_SANDBOX_SPEND_CAP_USD`, `FORGE_DATA_DIR`: required with
+  `SANDBOX_PROVIDER=e2b` (see docs/verification/step2.md).
 
 Existing hosting/auth config still applies (`AGENT_SERVICE_SECRET`,
 `ALLOWED_ORIGINS`, web→agent URL and signed tenant tokens); see PR9 recovery docs.
